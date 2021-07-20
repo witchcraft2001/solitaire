@@ -1,0 +1,4 @@
+..\edit\8b.png
+..\edit\8c.png
+..\edit\9h.png
+..\edit\ah.png
