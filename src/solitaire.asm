@@ -11,7 +11,7 @@ main:	        di
 ;                ld (DOSLine+1),ix
                 call SavePages
                 ld hl,AppDir
-                ld c,Dss.AppInfo
+                ld bc,256 + Dss.AppInfo
                 rst #10
                 ld hl,AppDir
                 ld de,AssetsDir
@@ -26,8 +26,17 @@ main:	        di
                 ld bc,cards0-AssetsDirName
                 ldir
                 pop hl
+                push hl
                 ld c,Dss.ChDir
                 rst #10
+                jr nc,.next
+                ld hl,OpenDirErrorMessage
+                ld c,Dss.PChars
+                rst #10
+                pop hl
+                jp PrintError
+
+.next:          pop hl
                 ld hl,ResourcesLoadingMessage
                 ld c,Dss.PChars
                 rst #10
@@ -56,12 +65,24 @@ main:	        di
                 inc de
                 djnz .loadLoop                
                 call ChangeVideoMode
-                ; ld hl,Palette+1
-                ; ld a,(Palette)
-                ; ld d,a
-                ; ld e,0
-                ; ld a,1
-                ; call SetPalette
+                ld hl,Palette+1
+                ld a,(Palette)
+                ld d,a
+                ld e,0
+                ld a,1
+                call SetPalette
+
+                ld c,7                  ;Set mouse vertical bounds
+                ld hl,0
+                ld de,160
+                rst #30
+
+
+                ld c,8                  ;Set mouse horizontal bounds
+                ld hl,0
+                ld de,320-71
+                rst #30
+
                 ; ld hl,TempPal
                 ; call ResetPallete
                 ; call ShowBackground
@@ -75,9 +96,22 @@ main:	        di
                 ; ld b,a
                 ; ld c,0
                 ; call UnfadePallete
-
-.loop:                
-                call WaitSpaceKey
+                in a,(RGMOD)
+                and a
+                ld a,1
+                jr nz,.loop
+                ld (Im2Handler.needChangePage),a        ;Переключаем основной экран на 1
+.loop:          ei
+                halt
+                call Update0Screen
+                call UpdateScreenFlag
+                call CheckKeys
+                jr c,.exit
+                ei
+                halt
+                call Update1Screen
+                call UpdateScreenFlag
+                call CheckKeys
                 jp nc,.loop
 
 .exit:
@@ -107,8 +141,72 @@ main:	        di
                 pop bc
                 jp  FileReadError
 
+;Обновляем флаг необходимости смены основного экрана
+UpdateScreenFlag:
+                ld a,1
+                ld (Im2Handler.needChangePage),a
+                ret
+
+Update0Screen:
+                ld hl,(CardCoord0.x)
+                call CoordToAddrP3
+                ld a,(CardCoord0.y)
+                ld bc,#6047
+                call RestoreRect
+                ld c,3                  ;Read mouse state
+                rst #30
+                ld a,e
+                ld (CardCoord0.y),a
+                ex af,af'
+                ld (CardCoord0.x),hl
+                call CoordToAddrP1
+                in a,(EmmWin.P3)
+                push af
+                ld a,(MemoryBuffer.memCards0)
+                out (EmmWin.P3),a
+                ld de,#c000
+                ex de,hl
+                ld bc,#6047
+                ex af,af'
+                call ShowMaskBitmapShadowAcc
+                pop af
+                out (EmmWin.P3),a
+                ret
+Update1Screen:
+                ld hl,(CardCoord1.x)
+                call CoordToAddrP3
+                ld a,(CardCoord1.y)
+                ld bc,#6047
+                call RestoreRect
+                ld c,3                  ;Read mouse state
+                rst #30
+                ld a,e
+                ld (CardCoord1.y),a
+                ex af,af'
+                ld (CardCoord1.x),hl
+                call CoordToAddrP1
+                in a,(EmmWin.P3)
+                push af
+                ld a,(MemoryBuffer.memCards0)
+                out (EmmWin.P3),a
+                ld de,#c000
+                ex de,hl
+                ld bc,#6047
+                ex af,af'
+                call ShowMaskBitmapShadowAcc
+                pop af
+                out (EmmWin.P3),a
+                ret
+
 LoadResource:   ld  a,(de)
                 out (EmmWin.P3),a
+                push hl
+                ld c,Dss.PChars
+                rst #10
+                ld hl,CrLf
+                ld c,Dss.PChars
+                rst #10
+                pop hl
                 xor a
 	        ld c,Dss.Open
 	        rst #10
@@ -124,6 +222,18 @@ LoadResource:   ld  a,(de)
                 ld c,Dss.Close
                 rst #10
                 pop af
+                ret
+
+CoordToAddrP3:  push de
+                ld de,#c000
+                add hl,de
+                pop de
+                ret
+
+CoordToAddrP1:  push de
+                ld de,#4000
+                add hl,de
+                pop de
                 ret
 
 FindNextName:   ld a,(hl)
@@ -224,7 +334,14 @@ Im2Handler:     di
                 push de
                 push ix
                 push iy
-                in a,(EmmWin.P3)
+	        ld a,0
+.needChangePage: equ $-1
+	        and a
+	        jr z,.skip
+                call ChangeVideoPage
+                xor a
+                ld (.needChangePage),a
+.skip:          in a,(EmmWin.P3)
                 push af
                 ld hl,Counter
                 inc (hl)
@@ -258,10 +375,13 @@ NotEnoughtMemoryMessage:
 FileReadErrorMessage:
                 db cr,lf,"Error: Can't read file!",cr,lf
 		db cr,lf,0
+OpenDirErrorMessage:
+                db cr,lf,"Error: Can't open ASSETS dir!"
+		db cr,lf,0
 
 ResourcesLoadingMessage:
                 db cr,lf,"Loading resources, please wait ...",cr,lf
-		db cr,lf,0
+CrLf:		db cr,lf,0
 
 Counter:        db 0
 fHandler        db 0
@@ -286,6 +406,14 @@ Page0:          db 0
 Page1:          db 0
 Page2:          db 0
 Page3:          db 0
+
+CardCoord0:      
+.y:             db 0
+.x:             dw 0
+
+CardCoord1:
+.y:             db 0
+.x:             dw 0
 
                 include "grx_utils.asm"
                 include "sys_utils.asm"

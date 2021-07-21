@@ -10,6 +10,15 @@ WaitSpaceKey:
 	scf
         ret
 
+CheckKeys:
+	ld	c,Dss.ScanKey
+	rst	#10
+	ret	z
+	cp	#1B
+	ret	nz
+	scf
+        ret
+
 ; процедура сохранения страницы в указнном окне.
 ; C = окно (порт)
 ; HL = куда сохранять.
